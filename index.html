@@ -216,6 +216,15 @@ const STAGE_CONFIGS = [
   { time:40, count:22, cols:6, label:'ステージ 5 / 5' },
 ];
 
+const AUDIO = {
+  bgm: new Audio('resources/sounds/bgm.wav'),
+  start: new Audio('resources/sounds/start_voice.m4a'),
+  correct: new Audio('resources/sounds/correct.m4a'),
+};
+AUDIO.bgm.loop = true;
+let audioUnlocked = false;
+let pendingStageStartVoice = false;
+
 function shuffle(arr){
   const a=[...arr];
   for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1));[a[i],a[j]]=[a[j],a[i]];}
@@ -248,7 +257,35 @@ function buildLayout(cfg){
 
 let stage=0,score=0,timeLeft=60,timer=null,answered=false;
 
+function unlockAudio(){
+  if(audioUnlocked) return;
+  AUDIO.bgm.play().then(()=>{
+    audioUnlocked = true;
+    if(pendingStageStartVoice){
+      pendingStageStartVoice = false;
+      playStageStartVoice();
+    }
+  }).catch(()=>{});
+}
+
+function playStageStartVoice(){
+  if(!audioUnlocked){
+    pendingStageStartVoice = true;
+    return;
+  }
+  AUDIO.start.currentTime = 0;
+  AUDIO.start.play().catch(()=>{});
+}
+
+function playCorrectVoice(){
+  if(!audioUnlocked) return;
+  AUDIO.correct.currentTime = 0;
+  AUDIO.correct.play().catch(()=>{});
+}
+
 function loadStage(idx){
+  unlockAudio();
+  playStageStartVoice();
   answered=false;
   const cfg=STAGE_CONFIGS[idx];
   timeLeft=cfg.time;
@@ -287,9 +324,11 @@ function updateTimerDisplay(){
 }
 
 function handleTap(el,isTarget){
+  unlockAudio();
   if(answered||!isTarget)return;
   answered=true;
   clearInterval(timer);
+  playCorrectVoice();
   el.classList.add('correct');
   spawnParticles(el);
   const pts=Math.max(timeLeft*3,10);
@@ -354,6 +393,7 @@ function restartGame(){
   document.getElementById('ov-clear').classList.remove('show');
   stage=0;score=0;loadStage(0);
 }
+window.addEventListener('pointerdown', unlockAudio, { passive:true });
 window.addEventListener('load',()=>loadStage(0));
 </script>
 </body>
