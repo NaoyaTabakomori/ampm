@@ -91,6 +91,51 @@ body{
   display:flex;flex-direction:column;align-items:center;
   min-width:16%;
 }
+.hud-items{
+  position:absolute;left:50%;bottom:2.3%;transform:translateX(-50%);z-index:56;
+  display:flex;align-items:center;gap:8px;
+  background:rgba(0,0,0,.45);padding:6px 8px;border-radius:14px;
+}
+.item-btn{
+  min-width:92px;
+  border:2px solid #ffe38a;border-radius:10px;
+  background:rgba(255,255,255,.18);color:#fff;
+  font-family:'Zen Maru Gothic',sans-serif;
+  font-size:clamp(9px,1.5vw,12px);font-weight:900;
+  padding:6px 8px;cursor:pointer;
+}
+.item-btn:disabled{
+  opacity:.45;
+  cursor:not-allowed;
+}
+.item-btn.ready{border-color:#ffe95a;background:rgba(255,180,0,.28);}
+.item-btn.active{border-color:#8ef3ff;background:rgba(0,176,255,.3);}
+.effect-smoke{
+  position:absolute;inset:0;z-index:58;pointer-events:none;
+  background:
+    radial-gradient(circle at 30% 30%, rgba(255,255,255,.18), transparent 45%),
+    radial-gradient(circle at 70% 65%, rgba(255,255,255,.14), transparent 42%),
+    radial-gradient(circle at 50% 50%, rgba(210,210,210,.4), rgba(120,120,120,.45));
+  opacity:0;
+  transition:opacity .15s;
+}
+.effect-smoke.show{opacity:1;}
+.item-toast{
+  position:absolute;left:50%;bottom:13.5%;transform:translateX(-50%);
+  z-index:70;pointer-events:none;
+  background:rgba(0,0,0,.65);color:#fff;
+  border:2px solid #ffd26a;border-radius:999px;
+  padding:6px 14px;font-size:clamp(10px,1.5vw,13px);font-weight:900;
+  opacity:0;transition:opacity .18s, transform .18s;
+}
+.item-toast.show{opacity:1;transform:translateX(-50%) translateY(-4px);}
+.effect-orb{
+  animation:orb-pulse .45s ease-in-out infinite alternate;
+}
+@keyframes orb-pulse{
+  from{filter:drop-shadow(0 0 0 rgba(80,220,255,.0));}
+  to{filter:drop-shadow(0 0 8px rgba(80,220,255,.8));}
+}
 .target-bubble{
   position:absolute;top:-17px;left:50%;transform:translateX(-50%);
   background:#ffdd00;border:3px solid #dd2200;border-radius:18px;
@@ -223,6 +268,12 @@ body{
       <div class="target-preview"><img src="resources/images/anpan.png" alt="アンパンマン"></div>
       <div class="target-name">アンパンマン</div>
     </div>
+    <div class="hud-items" id="items-el">
+      <button class="item-btn" id="item-0" onclick="useItemAt(0)" disabled>アイテムなし</button>
+      <button class="item-btn" id="item-1" onclick="useItemAt(1)" disabled>アイテムなし</button>
+    </div>
+    <div class="item-toast" id="item-toast"></div>
+    <div class="effect-smoke" id="effect-smoke"></div>
 
     <div class="overlay show" id="ov-title">
       <div class="ov-bg"></div>
@@ -283,6 +334,11 @@ const AUDIO = {
 AUDIO.bgm.loop = true;
 const TOTAL_TIME = 60;
 const DUO_WS_URL = 'wss://ampm-s9dc.onrender.com/ws';
+const ITEM_META = {
+  orb:{label:'オーブ x2', durMs:3000},
+  smoke:{label:'スモーク', durMs:2000},
+  shield:{label:'シールド', durMs:0}
+};
 let audioUnlocked = false;
 let pendingStageStartVoice = false;
 const MP = {
@@ -293,7 +349,8 @@ const MP = {
   myId:'',
   roomId:'',
   scores:{},
-  endAt:0
+  endAt:0,
+  items:[]
 };
 
 function shuffle(arr){
@@ -324,7 +381,7 @@ function getHudReserves(scene){
   if(!scene) return [];
   const sr=scene.getBoundingClientRect();
   const mx=1.4,my=1.2;
-  const selectors=['.hud-target','.hud-timer'];
+  const selectors=['.hud-target','.hud-timer','.hud-items'];
   return selectors.map(sel=>{
     const el=document.querySelector(sel);
     if(!el) return null;
@@ -430,6 +487,13 @@ function buildLayout(cfg,reserves){
 
 let stage=0,timeLeft=TOTAL_TIME,timer=null,answered=false,gameOver=false,foundCount=0;
 let nextStageTimer=null;
+let itemCooldownUntil=0;
+let stageItemUsed=false;
+let inStageTransition=false;
+let orbUntil=0;
+let smokeUntil=0;
+let pendingStageBoost=0;
+let toastTimer=null;
 
 function showTitle(){
   document.getElementById('ov-title').classList.add('show');
@@ -456,6 +520,16 @@ function cleanupForModeSwitch(){
   MP.myId='';
   MP.roomId='';
   MP.scores={};
+  MP.items=[];
+  itemCooldownUntil=0;
+  stageItemUsed=false;
+  inStageTransition=false;
+  orbUntil=0;
+  smokeUntil=0;
+  pendingStageBoost=0;
+  setSmoke(false);
+  showItemToast('');
+  updateItemHud();
 }
 
 function startSoloMode(){
@@ -512,6 +586,8 @@ function loadStage(idx){
   unlockAudio();
   playStageStartVoice();
   answered=false;
+  inStageTransition=false;
+  stageItemUsed=false;
   const cfg=getResponsiveStageConfig(idx);
   document.querySelectorAll('.char,.ptcl,.red-flash').forEach(e=>e.remove());
   document.getElementById('stage-el').textContent='ステージ '+(idx+1);
@@ -532,6 +608,8 @@ function loadStage(idx){
     requestAnimationFrame(()=>div.style.opacity='1');
   });
   document.getElementById('ov-time').classList.remove('show');
+  sendStageReached(idx+1);
+  updateItemHud();
 }
 
 function updateTimerDisplay(){
@@ -544,6 +622,8 @@ function handleTap(el,isTarget){
   unlockAudio();
   if(answered||!isTarget)return;
   answered=true;
+  inStageTransition=true;
+  pendingStageBoost = Date.now()<orbUntil ? 1 : 0;
   foundCount++;
   updateMatchHud();
   sendFound();
@@ -590,7 +670,10 @@ function showTimeOver(){
 
 function nextStage(){
   if(gameOver) return;
-  stage++;loadStage(stage);
+  const step=1+pendingStageBoost;
+  pendingStageBoost=0;
+  stage+=step;
+  loadStage(stage);
 }
 
 function startGame(){
@@ -600,19 +683,29 @@ function startGame(){
   foundCount=0;
   timeLeft=TOTAL_TIME;
   answered=false;
+  itemCooldownUntil=0;
+  stageItemUsed=false;
+  inStageTransition=false;
+  orbUntil=0;
+  smokeUntil=0;
+  pendingStageBoost=0;
+  setSmoke(false);
   document.getElementById('ov-time').classList.remove('show');
   clearInterval(timer);
   clearTimeout(nextStageTimer);
   document.querySelectorAll('.char,.ptcl,.red-flash').forEach(e=>e.remove());
   if(MP.soloMode){
     MP.endAt = Date.now() + TOTAL_TIME*1000;
+    MP.items = [];
   }
   updateMatchHud();
+  updateItemHud();
   timer=setInterval(()=>{
     if(gameOver || answered) return;
     const left=Math.ceil((MP.endAt-Date.now())/1000);
     timeLeft=Math.max(0,left);
     updateTimerDisplay();
+    updateItemHud();
     if(timeLeft<=0 && !answered) showTimeOver();
   },200);
   loadStage(stage);
@@ -627,6 +720,72 @@ function restartGame(){
     return;
   }
   startGame();
+}
+
+function canUseItemNow(){
+  if(MP.soloMode) return false;
+  if(!MP.inMatch || !MP.connected || gameOver) return false;
+  if(answered || inStageTransition) return false;
+  if(timeLeft<3) return false;
+  if(Date.now()<itemCooldownUntil) return false;
+  if(stageItemUsed) return false;
+  return true;
+}
+
+function updateItemHud(){
+  const wrap=document.getElementById('items-el');
+  wrap.style.display=MP.soloMode?'none':'flex';
+  const orbActive=Date.now()<orbUntil;
+  for(let i=0;i<2;i++){
+    const btn=document.getElementById('item-'+i);
+    const item=MP.items[i]||null;
+    btn.className='item-btn'+(item?' ready':'')+(orbActive?' active':'');
+    if(!item){
+      btn.textContent='アイテムなし';
+      btn.disabled=true;
+      continue;
+    }
+    btn.textContent=ITEM_META[item.type]?.label || item.type;
+    btn.disabled=!canUseItemNow();
+  }
+  const scene=document.getElementById('scene');
+  if(scene){
+    if(orbActive) scene.classList.add('effect-orb');
+    else scene.classList.remove('effect-orb');
+  }
+}
+
+function useItemAt(slot){
+  if(!canUseItemNow()) return;
+  const item=MP.items[slot];
+  if(!item) return;
+  if(!MP.ws || MP.ws.readyState!==WebSocket.OPEN) return;
+  MP.ws.send(JSON.stringify({type:'use_item', itemId:item.id}));
+}
+
+function sendStageReached(stageNo){
+  if(MP.soloMode) return;
+  if(!MP.ws || MP.ws.readyState!==WebSocket.OPEN || !MP.inMatch) return;
+  MP.ws.send(JSON.stringify({type:'stage_reached', stage:stageNo}));
+}
+
+function setSmoke(on){
+  const el=document.getElementById('effect-smoke');
+  if(on){ el.classList.add('show'); }
+  else { el.classList.remove('show'); }
+}
+
+function showItemToast(text){
+  const el=document.getElementById('item-toast');
+  if(!el) return;
+  clearTimeout(toastTimer);
+  if(!text){
+    el.classList.remove('show');
+    return;
+  }
+  el.textContent=text;
+  el.classList.add('show');
+  toastTimer=setTimeout(()=>el.classList.remove('show'),1200);
 }
 
 function updateMatchHud(){
@@ -696,6 +855,15 @@ function connectMatchServer(wsUrl){
       MP.roomId=msg.roomId;
       MP.scores=msg.scores||{};
       MP.endAt=msg.endAt;
+      MP.items=[];
+      itemCooldownUntil=0;
+      stageItemUsed=false;
+      inStageTransition=false;
+      orbUntil=0;
+      smokeUntil=0;
+      pendingStageBoost=0;
+      setSmoke(false);
+      showItemToast('');
       document.getElementById('ov-time').classList.remove('show');
       startGame();
       return;
@@ -714,6 +882,45 @@ function connectMatchServer(wsUrl){
       document.getElementById('ov-time-sub').textContent='相手が切断しました。';
       document.getElementById('ov-time').classList.add('show');
       updateMatchHud();
+      updateItemHud();
+      return;
+    }
+    if(msg.type==='inventory_update'){
+      MP.items=Array.isArray(msg.items)?msg.items:[];
+      if(msg.reason==='grant'){
+        showItemToast('アイテムをゲット！');
+      }
+      updateItemHud();
+      return;
+    }
+    if(msg.type==='item_applied'){
+      const now=Date.now();
+      if(msg.by===MP.myId){
+        stageItemUsed=true;
+        itemCooldownUntil=now+8000;
+      }
+      if(msg.typeName==='orb' && msg.by===MP.myId){
+        orbUntil=msg.effectUntil||0;
+        showItemToast('オーブ発動！');
+      }
+      if(msg.typeName==='smoke' && msg.targetId===MP.myId && !msg.blocked){
+        smokeUntil=msg.effectUntil||0;
+        showItemToast('スモークを受けた！');
+        setSmoke(true);
+        setTimeout(()=>{
+          if(Date.now()>=smokeUntil) setSmoke(false);
+        }, ITEM_META.smoke.durMs + 60);
+      }
+      if(msg.typeName==='smoke' && msg.by===MP.myId && !msg.blocked){
+        showItemToast('スモーク発動！');
+      }
+      if(msg.typeName==='smoke' && msg.by===MP.myId && msg.blocked){
+        showItemToast('相手のシールドで防がれた');
+      }
+      if(msg.typeName==='shield' && msg.by===MP.myId){
+        showItemToast('シールド展開！');
+      }
+      updateItemHud();
     }
   });
 }
