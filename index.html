@@ -154,37 +154,19 @@ body{
         <span class="timer-unit">びょう</span>
       </div>
     </div>
-    <div class="hud-score" id="score-el">スコア: 0</div>
-    <div class="hud-stage" id="stage-el">ステージ 1 / 5</div>
+    <div class="hud-stage" id="stage-el">ステージ 1</div>
     <div class="hud-target">
       <div class="target-bubble">どーこだ？</div>
       <div class="target-preview"><img src="resources/images/anpan.png" alt="アンパンマン"></div>
       <div class="target-name">アンパンマン</div>
     </div>
 
-    <div class="overlay" id="ov-result">
-      <div class="ov-bg"></div>
-      <div class="ov-card">
-        <h2 id="ov-title">🎉 せいかい！</h2>
-        <div class="sub" id="ov-sub"></div>
-        <button class="btn" id="ov-next" onclick="nextStage()">つぎへ →</button>
-      </div>
-    </div>
     <div class="overlay" id="ov-time">
       <div class="ov-bg"></div>
       <div class="ov-card">
         <h2 style="color:#cc2200">⏰ じかんぎれ！</h2>
-        <div class="sub">もう一度チャレンジしよう！</div>
-        <button class="btn" style="background:linear-gradient(180deg,#4499ff,#2266dd);box-shadow:0 4px 0 #0033aa" onclick="retryStage()">もう一度 🔄</button>
-      </div>
-    </div>
-    <div class="overlay" id="ov-clear">
-      <div class="ov-bg"></div>
-      <div class="ov-card">
-        <h2 style="color:#cc6600">🏆 ゲームクリア！</h2>
-        <div id="clear-stars" style="font-size:1.8rem;margin:8px 0"></div>
-        <div class="sub" id="clear-score"></div>
-        <button class="btn" onclick="restartGame()">もう一度あそぶ 🎮</button>
+        <div class="sub" id="ov-time-sub"></div>
+        <button class="btn" style="background:linear-gradient(180deg,#4499ff,#2266dd);box-shadow:0 4px 0 #0033aa" onclick="restartGame()">もう一度 🔄</button>
       </div>
     </div>
   </div>
@@ -222,6 +204,7 @@ const AUDIO = {
   correct: new Audio('resources/sounds/correct.m4a'),
 };
 AUDIO.bgm.loop = true;
+const TOTAL_TIME = 60;
 let audioUnlocked = false;
 let pendingStageStartVoice = false;
 
@@ -255,17 +238,22 @@ function buildLayout(cfg){
   return positions;
 }
 
-let stage=0,score=0,timeLeft=60,timer=null,answered=false;
+let stage=0,timeLeft=TOTAL_TIME,timer=null,answered=false,gameOver=false;
 
 function unlockAudio(){
-  if(audioUnlocked) return;
-  AUDIO.bgm.play().then(()=>{
-    audioUnlocked = true;
-    if(pendingStageStartVoice){
-      pendingStageStartVoice = false;
-      playStageStartVoice();
-    }
-  }).catch(()=>{});
+  if(audioUnlocked){
+    if(AUDIO.bgm.paused) AUDIO.bgm.play().catch(()=>{});
+    return;
+  }
+  AUDIO.bgm.play()
+    .then(()=>{
+      audioUnlocked = true;
+      if(pendingStageStartVoice){
+        pendingStageStartVoice = false;
+        playStageStartVoice();
+      }
+    })
+    .catch(()=>{});
 }
 
 function playStageStartVoice(){
@@ -284,14 +272,13 @@ function playCorrectVoice(){
 }
 
 function loadStage(idx){
+  if(gameOver) return;
   unlockAudio();
   playStageStartVoice();
   answered=false;
-  const cfg=STAGE_CONFIGS[idx];
-  timeLeft=cfg.time;
+  const cfg=STAGE_CONFIGS[Math.min(idx,STAGE_CONFIGS.length-1)];
   document.querySelectorAll('.char,.ptcl,.red-flash').forEach(e=>e.remove());
-  document.getElementById('stage-el').textContent=cfg.label;
-  document.getElementById('score-el').textContent='スコア: '+score;
+  document.getElementById('stage-el').textContent='ステージ '+(idx+1);
   updateTimerDisplay();
   const layout=buildLayout(cfg);
   const scene=document.getElementById('scene');
@@ -308,13 +295,7 @@ function loadStage(idx){
     scene.appendChild(div);
     requestAnimationFrame(()=>div.style.opacity='1');
   });
-  ['ov-result','ov-time','ov-clear'].forEach(id=>document.getElementById(id).classList.remove('show'));
-  clearInterval(timer);
-  timer=setInterval(()=>{
-    timeLeft--;
-    updateTimerDisplay();
-    if(timeLeft<=0){clearInterval(timer);if(!answered)showTimeOver();}
-  },1000);
+  document.getElementById('ov-time').classList.remove('show');
 }
 
 function updateTimerDisplay(){
@@ -327,14 +308,10 @@ function handleTap(el,isTarget){
   unlockAudio();
   if(answered||!isTarget)return;
   answered=true;
-  clearInterval(timer);
   playCorrectVoice();
   el.classList.add('correct');
   spawnParticles(el);
-  const pts=Math.max(timeLeft*3,10);
-  score+=pts;
-  document.getElementById('score-el').textContent='スコア: '+score;
-  setTimeout(()=>showResult(pts),700);
+  setTimeout(nextStage,1000);
 }
 
 function spawnParticles(fromEl){
@@ -357,44 +334,44 @@ function spawnParticles(fromEl){
   }
 }
 
-function showResult(pts){
-  const isLast=stage>=STAGE_CONFIGS.length-1;
-  document.getElementById('ov-title').textContent=timeLeft>20?'🎯 パーフェクト！':'🎉 せいかい！';
-  document.getElementById('ov-sub').textContent=`+${pts}ポイント！（合計: ${score}）`;
-  document.getElementById('ov-next').textContent=isLast?'結果を見る 🏆':'つぎへ →';
-  document.getElementById('ov-result').classList.add('show');
-}
-
 function showTimeOver(){
+  if(gameOver) return;
+  gameOver=true;
   answered=true;
+  clearInterval(timer);
+  AUDIO.bgm.pause();
   const f=document.createElement('div');f.className='red-flash';
   document.getElementById('scene').appendChild(f);
   setTimeout(()=>f.remove(),800);
+  document.getElementById('ov-time-sub').textContent='到達ステージ: '+(stage+1);
   setTimeout(()=>document.getElementById('ov-time').classList.add('show'),400);
 }
 
 function nextStage(){
-  document.getElementById('ov-result').classList.remove('show');
-  if(stage>=STAGE_CONFIGS.length-1){showClear();return;}
+  if(gameOver) return;
   stage++;loadStage(stage);
 }
-function retryStage(){
+
+function startGame(){
+  gameOver=false;
+  stage=0;
+  timeLeft=TOTAL_TIME;
   document.getElementById('ov-time').classList.remove('show');
+  clearInterval(timer);
+  timer=setInterval(()=>{
+    if(gameOver) return;
+    timeLeft--;
+    updateTimerDisplay();
+    if(timeLeft<=0)showTimeOver();
+  },1000);
   loadStage(stage);
 }
-function showClear(){
-  clearInterval(timer);
-  const stars=score>=1200?'⭐⭐⭐':score>=700?'⭐⭐':'⭐';
-  document.getElementById('clear-stars').textContent=stars;
-  document.getElementById('clear-score').textContent=`合計スコア: ${score}ポイント！`;
-  document.getElementById('ov-clear').classList.add('show');
-}
+
 function restartGame(){
-  document.getElementById('ov-clear').classList.remove('show');
-  stage=0;score=0;loadStage(0);
+  startGame();
 }
 window.addEventListener('pointerdown', unlockAudio, { passive:true });
-window.addEventListener('load',()=>loadStage(0));
+window.addEventListener('load',startGame);
 </script>
 </body>
 </html>
