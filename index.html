@@ -147,6 +147,27 @@ body{
   animation:flash-out .7s forwards;pointer-events:none;
 }
 @keyframes flash-out{0%{opacity:1}100%{opacity:0}}
+@media (max-width: 900px){
+  .frame{
+    width:100vw;
+    height:100vh;
+    aspect-ratio:auto;
+    border-radius:0;
+    box-shadow:none;
+  }
+  .frame::before,.frame::after{opacity:.55}
+  .hud-target{
+    border-width:4px;
+    padding:6px 6px 3px;
+    min-width:auto;
+  }
+  .target-preview{
+    width:clamp(36px,11vw,64px);
+    height:clamp(36px,11vw,64px);
+  }
+  .target-bubble{top:-14px}
+  .hud-timer{min-width:auto;padding:4px 9px 5px}
+}
 </style>
 </head>
 <body>
@@ -223,12 +244,54 @@ function shuffle(arr){
   return a;
 }
 
-function buildLayout(cfg){
+function getResponsiveStageConfig(idx){
+  const base=STAGE_CONFIGS[Math.min(idx,STAGE_CONFIGS.length-1)];
+  const w=window.innerWidth;
+  let count=base.count, cols=base.cols;
+  if(w<=1024){
+    count=Math.max(8,Math.round(base.count*.9));
+  }
+  if(w<=820){
+    count=Math.max(7,Math.round(base.count*.8));
+    cols=Math.max(3,base.cols-1);
+  }
+  if(w<=600){
+    count=Math.max(6,Math.round(base.count*.68));
+    cols=Math.max(2,base.cols-2);
+  }
+  return {...base,count,cols};
+}
+
+function getHudReserves(scene){
+  if(!scene) return [];
+  const sr=scene.getBoundingClientRect();
+  const mx=1.4,my=1.2;
+  const selectors=['.hud-target','.hud-timer'];
+  return selectors.map(sel=>{
+    const el=document.querySelector(sel);
+    if(!el) return null;
+    const r=el.getBoundingClientRect();
+    return {
+      x:((r.left-sr.left)/sr.width*100)-mx,
+      y:((r.top-sr.top)/sr.height*100)-my,
+      w:(r.width/sr.width*100)+mx*2,
+      h:(r.height/sr.height*100)+my*2
+    };
+  }).filter(Boolean);
+}
+
+function isOverlapped(x,y,size,reserves){
+  if(!reserves || reserves.length===0) return false;
+  return reserves.some(r=>!(x+size<=r.x || r.x+r.w<=x || y+size<=r.y || r.y+r.h<=y));
+}
+
+function buildLayout(cfg,reserves){
   const {count,cols}=cfg;
   const rows=Math.ceil(count/cols);
-  const x0=22,x1=88,y0=12,y1=84;
+  const x0=4,x1=96,y0=8,y1=93;
   const cellW=(x1-x0)/cols, cellH=(y1-y0)/rows;
-  const charSize=Math.min(cellW*.72,cellH*.72,14);
+  const maxSize=window.innerWidth<=600?24:18;
+  const charSize=Math.min(cellW*.9,cellH*.9,maxSize);
   let noisePool=shuffle([...NOISE,...NOISE,...NOISE]).slice(0,count-1);
   const targetPos=Math.floor(Math.random()*count);
   const positions=[];
@@ -236,10 +299,19 @@ function buildLayout(cfg){
   for(let i=0;i<count;i++){
     const col=i%cols,row=Math.floor(i/cols);
     const bx=x0+col*cellW,by=y0+row*cellH;
-    const ox=(Math.random()-.5)*cellW*.35;
-    const oy=(Math.random()-.5)*cellH*.35;
-    const x=Math.max(x0,Math.min(x1-charSize,bx+ox));
-    const y=Math.max(y0,Math.min(y1-charSize,by+oy));
+    let x=x0,y=y0;
+    for(let t=0;t<12;t++){
+      const ox=(Math.random()-.5)*cellW*.55;
+      const oy=(Math.random()-.5)*cellH*.55;
+      x=Math.max(x0,Math.min(x1-charSize,bx+ox));
+      y=Math.max(y0,Math.min(y1-charSize,by+oy));
+      if(!isOverlapped(x,y,charSize,reserves)) break;
+      if(t===11 && reserves && reserves.length){
+        const r=reserves[0];
+        x=Math.max(x0,Math.min(r.x-charSize-1,x1-charSize));
+        y=Math.max(y0,Math.min(Math.max(r.y+r.h+1,y),y1-charSize));
+      }
+    }
     const isTarget=(i===targetPos);
     const id=isTarget?'anpanman':noisePool[ni++];
     positions.push({id,x,y,s:charSize,isTarget});
@@ -285,12 +357,12 @@ function loadStage(idx){
   unlockAudio();
   playStageStartVoice();
   answered=false;
-  const cfg=STAGE_CONFIGS[Math.min(idx,STAGE_CONFIGS.length-1)];
+  const cfg=getResponsiveStageConfig(idx);
   document.querySelectorAll('.char,.ptcl,.red-flash').forEach(e=>e.remove());
   document.getElementById('stage-el').textContent='ステージ '+(idx+1);
   updateTimerDisplay();
-  const layout=buildLayout(cfg);
   const scene=document.getElementById('scene');
+  const layout=buildLayout(cfg,getHudReserves(scene));
   layout.forEach((p,i)=>{
     const div=document.createElement('div');
     div.className='char';
