@@ -120,6 +120,9 @@ body{
   transition:opacity .15s;
 }
 .effect-smoke.show{opacity:1;}
+.scene.smoke-on .char img{
+  filter:brightness(0) saturate(0) contrast(1.15) !important;
+}
 .item-toast{
   position:absolute;left:50%;bottom:13.5%;transform:translateX(-50%);
   z-index:70;pointer-events:none;
@@ -335,7 +338,7 @@ AUDIO.bgm.loop = true;
 const TOTAL_TIME = 60;
 const DUO_WS_URL = 'wss://ampm-s9dc.onrender.com/ws';
 const ITEM_META = {
-  orb:{label:'オーブ x2', durMs:3000},
+  orb:{label:'オーブ(スコアx2)', durMs:3000},
   smoke:{label:'スモーク', durMs:2000},
   shield:{label:'シールド', durMs:0}
 };
@@ -492,7 +495,6 @@ let stageItemUsed=false;
 let inStageTransition=false;
 let orbUntil=0;
 let smokeUntil=0;
-let pendingStageBoost=0;
 let toastTimer=null;
 
 function showTitle(){
@@ -526,7 +528,6 @@ function cleanupForModeSwitch(){
   inStageTransition=false;
   orbUntil=0;
   smokeUntil=0;
-  pendingStageBoost=0;
   setSmoke(false);
   showItemToast('');
   updateItemHud();
@@ -623,7 +624,6 @@ function handleTap(el,isTarget){
   if(answered||!isTarget)return;
   answered=true;
   inStageTransition=true;
-  pendingStageBoost = Date.now()<orbUntil ? 1 : 0;
   foundCount++;
   updateMatchHud();
   sendFound();
@@ -670,9 +670,7 @@ function showTimeOver(){
 
 function nextStage(){
   if(gameOver) return;
-  const step=1+pendingStageBoost;
-  pendingStageBoost=0;
-  stage+=step;
+  stage+=1;
   loadStage(stage);
 }
 
@@ -688,7 +686,6 @@ function startGame(){
   inStageTransition=false;
   orbUntil=0;
   smokeUntil=0;
-  pendingStageBoost=0;
   setSmoke(false);
   document.getElementById('ov-time').classList.remove('show');
   clearInterval(timer);
@@ -771,8 +768,13 @@ function sendStageReached(stageNo){
 
 function setSmoke(on){
   const el=document.getElementById('effect-smoke');
+  const scene=document.getElementById('scene');
   if(on){ el.classList.add('show'); }
   else { el.classList.remove('show'); }
+  if(scene){
+    if(on) scene.classList.add('smoke-on');
+    else scene.classList.remove('smoke-on');
+  }
 }
 
 function showItemToast(text){
@@ -861,7 +863,6 @@ function connectMatchServer(wsUrl){
       inStageTransition=false;
       orbUntil=0;
       smokeUntil=0;
-      pendingStageBoost=0;
       setSmoke(false);
       showItemToast('');
       document.getElementById('ov-time').classList.remove('show');

@@ -160,7 +160,9 @@ function handleFound(player) {
   const room = getRoomByPlayer(player);
   if (!room) return;
   if (Date.now() >= room.endAt) return;
-  room.scores[player.id] = (room.scores[player.id] || 0) + 1;
+  const st = room.states[player.id];
+  const add = st && st.orbUntil && Date.now() < st.orbUntil ? 2 : 1;
+  room.scores[player.id] = (room.scores[player.id] || 0) + add;
   broadcast(room, { type: 'score_update', scores: room.scores });
 }
 
