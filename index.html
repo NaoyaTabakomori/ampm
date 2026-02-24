@@ -103,7 +103,10 @@ body{
   font-family:'Zen Maru Gothic',sans-serif;
   font-size:clamp(9px,1.5vw,12px);font-weight:900;
   padding:6px 8px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;gap:6px;
 }
+.item-ico{font-size:clamp(13px,1.9vw,16px);line-height:1;}
+.item-label{line-height:1.1;}
 .item-btn:disabled{
   opacity:.45;
   cursor:not-allowed;
@@ -123,6 +126,14 @@ body{
 .scene.smoke-on .char img{
   filter:brightness(0) saturate(0) contrast(1.15) !important;
 }
+.scene.mini-on .char{
+  transform:scale(.1) !important;
+  transform-origin:center center;
+}
+.scene.mini-on .char:hover,
+.scene.mini-on .char:active{
+  transform:scale(.1) !important;
+}
 .item-toast{
   position:absolute;left:50%;bottom:13.5%;transform:translateX(-50%);
   z-index:70;pointer-events:none;
@@ -132,13 +143,6 @@ body{
   opacity:0;transition:opacity .18s, transform .18s;
 }
 .item-toast.show{opacity:1;transform:translateX(-50%) translateY(-4px);}
-.effect-orb{
-  animation:orb-pulse .45s ease-in-out infinite alternate;
-}
-@keyframes orb-pulse{
-  from{filter:drop-shadow(0 0 0 rgba(80,220,255,.0));}
-  to{filter:drop-shadow(0 0 8px rgba(80,220,255,.8));}
-}
 .target-bubble{
   position:absolute;top:-17px;left:50%;transform:translateX(-50%);
   background:#ffdd00;border:3px solid #dd2200;border-radius:18px;
@@ -338,9 +342,10 @@ AUDIO.bgm.loop = true;
 const TOTAL_TIME = 60;
 const DUO_WS_URL = 'wss://ampm-s9dc.onrender.com/ws';
 const ITEM_META = {
-  orb:{label:'オーブ(スコアx2)', durMs:3000},
-  smoke:{label:'スモーク', durMs:2000},
-  shield:{label:'シールド', durMs:0}
+  smoke:{label:'スモーク', icon:'🌫️', durMs:2000},
+  mini:{label:'ミニ化', icon:'🤏', durMs:10000},
+  shuffle:{label:'シャッフル', icon:'🔀', durMs:0},
+  shield:{label:'シールド', icon:'🛡️', durMs:0}
 };
 let audioUnlocked = false;
 let pendingStageStartVoice = false;
@@ -493,8 +498,8 @@ let nextStageTimer=null;
 let itemCooldownUntil=0;
 let stageItemUsed=false;
 let inStageTransition=false;
-let orbUntil=0;
 let smokeUntil=0;
+let miniUntil=0;
 let toastTimer=null;
 
 function showTitle(){
@@ -526,9 +531,10 @@ function cleanupForModeSwitch(){
   itemCooldownUntil=0;
   stageItemUsed=false;
   inStageTransition=false;
-  orbUntil=0;
   smokeUntil=0;
+  miniUntil=0;
   setSmoke(false);
+  setMini(false);
   showItemToast('');
   updateItemHud();
 }
@@ -684,9 +690,10 @@ function startGame(){
   itemCooldownUntil=0;
   stageItemUsed=false;
   inStageTransition=false;
-  orbUntil=0;
   smokeUntil=0;
+  miniUntil=0;
   setSmoke(false);
+  setMini(false);
   document.getElementById('ov-time').classList.remove('show');
   clearInterval(timer);
   clearTimeout(nextStageTimer);
@@ -732,23 +739,18 @@ function canUseItemNow(){
 function updateItemHud(){
   const wrap=document.getElementById('items-el');
   wrap.style.display=MP.soloMode?'none':'flex';
-  const orbActive=Date.now()<orbUntil;
   for(let i=0;i<2;i++){
     const btn=document.getElementById('item-'+i);
     const item=MP.items[i]||null;
-    btn.className='item-btn'+(item?' ready':'')+(orbActive?' active':'');
+    btn.className='item-btn'+(item?' ready':'');
     if(!item){
-      btn.textContent='アイテムなし';
+      btn.innerHTML='<span class="item-ico">・</span><span class="item-label">アイテムなし</span>';
       btn.disabled=true;
       continue;
     }
-    btn.textContent=ITEM_META[item.type]?.label || item.type;
+    const meta=ITEM_META[item.type] || {label:item.type,icon:'❔'};
+    btn.innerHTML='<span class="item-ico">'+meta.icon+'</span><span class="item-label">'+meta.label+'</span>';
     btn.disabled=!canUseItemNow();
-  }
-  const scene=document.getElementById('scene');
-  if(scene){
-    if(orbActive) scene.classList.add('effect-orb');
-    else scene.classList.remove('effect-orb');
   }
 }
 
@@ -775,6 +777,29 @@ function setSmoke(on){
     if(on) scene.classList.add('smoke-on');
     else scene.classList.remove('smoke-on');
   }
+}
+
+function setMini(on){
+  const scene=document.getElementById('scene');
+  if(!scene) return;
+  if(on) scene.classList.add('mini-on');
+  else scene.classList.remove('mini-on');
+}
+
+function applyShuffleEffect(){
+  const chars=[...document.querySelectorAll('.char')];
+  if(chars.length<2) return;
+  const slots=shuffle(chars.map(el=>({
+    left:el.style.left,
+    top:el.style.top,
+    width:el.style.width
+  })));
+  chars.forEach((el,i)=>{
+    el.style.transition='left .22s ease, top .22s ease, width .22s ease, opacity .2s';
+    el.style.left=slots[i].left;
+    el.style.top=slots[i].top;
+    el.style.width=slots[i].width;
+  });
 }
 
 function showItemToast(text){
@@ -861,9 +886,10 @@ function connectMatchServer(wsUrl){
       itemCooldownUntil=0;
       stageItemUsed=false;
       inStageTransition=false;
-      orbUntil=0;
       smokeUntil=0;
+      miniUntil=0;
       setSmoke(false);
+      setMini(false);
       showItemToast('');
       document.getElementById('ov-time').classList.remove('show');
       startGame();
@@ -900,10 +926,6 @@ function connectMatchServer(wsUrl){
         stageItemUsed=true;
         itemCooldownUntil=now+8000;
       }
-      if(msg.typeName==='orb' && msg.by===MP.myId){
-        orbUntil=msg.effectUntil||0;
-        showItemToast('オーブ発動！');
-      }
       if(msg.typeName==='smoke' && msg.targetId===MP.myId && !msg.blocked){
         smokeUntil=msg.effectUntil||0;
         showItemToast('スモークを受けた！');
@@ -912,10 +934,28 @@ function connectMatchServer(wsUrl){
           if(Date.now()>=smokeUntil) setSmoke(false);
         }, ITEM_META.smoke.durMs + 60);
       }
+      if(msg.typeName==='mini' && msg.targetId===MP.myId && !msg.blocked){
+        miniUntil=msg.effectUntil||0;
+        showItemToast('ミニ化を受けた！');
+        setMini(true);
+        setTimeout(()=>{
+          if(Date.now()>=miniUntil) setMini(false);
+        }, ITEM_META.mini.durMs + 60);
+      }
+      if(msg.typeName==='shuffle' && msg.targetId===MP.myId && !msg.blocked){
+        applyShuffleEffect();
+        showItemToast('シャッフルされた！');
+      }
       if(msg.typeName==='smoke' && msg.by===MP.myId && !msg.blocked){
         showItemToast('スモーク発動！');
       }
-      if(msg.typeName==='smoke' && msg.by===MP.myId && msg.blocked){
+      if(msg.typeName==='mini' && msg.by===MP.myId && !msg.blocked){
+        showItemToast('ミニ化発動！');
+      }
+      if(msg.typeName==='shuffle' && msg.by===MP.myId && !msg.blocked){
+        showItemToast('シャッフル発動！');
+      }
+      if((msg.typeName==='smoke' || msg.typeName==='mini' || msg.typeName==='shuffle') && msg.by===MP.myId && msg.blocked){
         showItemToast('相手のシールドで防がれた');
       }
       if(msg.typeName==='shield' && msg.by===MP.myId){

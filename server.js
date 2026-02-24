@@ -7,11 +7,10 @@ const HOST = '0.0.0.0';
 const PORT = Number(process.env.PORT || 3000);
 const MATCH_DURATION_MS = 60_000;
 const ITEM_COOLDOWN_MS = 8_000;
-const ORB_DURATION_MS = 3_000;
 const SMOKE_DURATION_MS = 2_000;
-const ITEM_STAGE_INTERVAL = 5;
+const MINI_DURATION_MS = 10_000;
 const INVENTORY_MAX = 2;
-const ITEM_POOL = ['orb', 'smoke', 'shield'];
+const ITEM_POOL = ['smoke', 'mini', 'shuffle', 'shield'];
 
 const ROOT = __dirname;
 const MIME = {
@@ -79,9 +78,13 @@ function mkItemId() {
   return id;
 }
 
-function pickRandomItemType() {
-  const i = Math.floor(Math.random() * ITEM_POOL.length);
-  return ITEM_POOL[i];
+function shuffle(arr) {
+  const a = arr.slice();
+  for (let i = a.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
 }
 
 function send(ws, msg) {
@@ -114,8 +117,8 @@ function beginMatch(p1, p2) {
     players: [p1, p2],
     scores: {[p1.id]: 0, [p2.id]: 0},
     states: {
-      [p1.id]: { inventory: [], nextGrantStage: ITEM_STAGE_INTERVAL, lastItemUsedAt: 0, lastItemUsedStage: 0, shieldOn: false, stageReached: 1 },
-      [p2.id]: { inventory: [], nextGrantStage: ITEM_STAGE_INTERVAL, lastItemUsedAt: 0, lastItemUsedStage: 0, shieldOn: false, stageReached: 1 }
+      [p1.id]: { inventory: [], lastItemUsedAt: 0, lastItemUsedStage: 0, shieldOn: false, stageReached: 1, lastGrantClearStage: 0 },
+      [p2.id]: { inventory: [], lastItemUsedAt: 0, lastItemUsedStage: 0, shieldOn: false, stageReached: 1, lastGrantClearStage: 0 }
     },
     endAt: Date.now() + MATCH_DURATION_MS,
     timer: null
@@ -160,22 +163,35 @@ function handleFound(player) {
   const room = getRoomByPlayer(player);
   if (!room) return;
   if (Date.now() >= room.endAt) return;
-  const st = room.states[player.id];
-  const add = st && st.orbUntil && Date.now() < st.orbUntil ? 2 : 1;
-  room.scores[player.id] = (room.scores[player.id] || 0) + add;
+  room.scores[player.id] = (room.scores[player.id] || 0) + 1;
   broadcast(room, { type: 'score_update', scores: room.scores });
+}
+
+function computeItemChance(room, playerId) {
+  const my = room.scores[playerId] || 0;
+  const oppPlayer = room.players.find((p) => p.id !== playerId);
+  const opp = oppPlayer ? (room.scores[oppPlayer.id] || 0) : 0;
+  const diff = Math.abs(my - opp);
+  const adjust = Math.min(20, diff * 5);
+  if (my > opp) return Math.max(5, 30 - adjust);
+  if (my < opp) return Math.min(85, 30 + adjust);
+  return 30;
 }
 
 function maybeGrantItems(room, player) {
   const st = room.states[player.id];
   if (!st) return;
+  const chance = computeItemChance(room, player.id);
   let granted = 0;
-  while (st.stageReached >= st.nextGrantStage) {
-    if (st.inventory.length < INVENTORY_MAX) {
-      st.inventory.push({ id: mkItemId(), type: pickRandomItemType() });
-      granted += 1;
+  if (st.inventory.length < INVENTORY_MAX) {
+    // 1) 抽選: アイテムを取得できるか
+    const canGetItem = Math.random() * 100 < chance;
+    // 2) 抽選: 何を取得するか（1個）
+    if (canGetItem) {
+      const type = shuffle(ITEM_POOL)[0];
+      st.inventory.push({ id: mkItemId(), type });
+      granted = 1;
     }
-    st.nextGrantStage += ITEM_STAGE_INTERVAL;
   }
   send(player.ws, { type: 'inventory_update', items: st.inventory, reason: granted > 0 ? 'grant' : 'sync' });
 }
@@ -189,6 +205,10 @@ function handleStageReached(player, stageNo) {
   if (!Number.isFinite(n)) return;
   const stageInt = Math.max(1, Math.floor(n));
   st.stageReached = Math.max(st.stageReached, stageInt);
+  const clearedStage = Math.max(0, stageInt - 1);
+  if (clearedStage <= st.lastGrantClearStage) return;
+  st.lastGrantClearStage = clearedStage;
+  if (clearedStage <= 0) return;
   maybeGrantItems(room, player);
 }
 
@@ -211,44 +231,57 @@ function handleUseItem(player, itemId) {
   me.lastItemUsedAt = now;
   me.lastItemUsedStage = me.stageReached;
 
-  if (item.type === 'orb') {
-    me.orbUntil = now + ORB_DURATION_MS;
-    broadcast(room, {
-      type: 'item_applied',
-      by: player.id,
-      typeName: 'orb',
-      effectUntil: me.orbUntil
-    });
-  } else if (item.type === 'smoke') {
-    const target = room.players.find((p) => p.id !== player.id);
-    if (!target) return;
-    const ts = room.states[target.id];
-    if (ts && ts.shieldOn) {
-      ts.shieldOn = false;
-      broadcast(room, {
-        type: 'item_applied',
-        by: player.id,
-        typeName: 'smoke',
-        targetId: target.id,
-        blocked: true
-      });
-      send(target.ws, { type: 'inventory_update', items: ts.inventory, reason: 'shield_consumed' });
-    } else {
-      broadcast(room, {
-        type: 'item_applied',
-        by: player.id,
-        typeName: 'smoke',
-        targetId: target.id,
-        effectUntil: now + SMOKE_DURATION_MS
-      });
-    }
-  } else if (item.type === 'shield') {
+  if (item.type === 'shield') {
     me.shieldOn = true;
     broadcast(room, {
       type: 'item_applied',
       by: player.id,
       typeName: 'shield',
       targetId: player.id
+    });
+    send(player.ws, { type: 'inventory_update', items: me.inventory, reason: 'consume' });
+    return;
+  }
+
+  const target = room.players.find((p) => p.id !== player.id);
+  if (!target) return;
+  const ts = room.states[target.id];
+  if (ts && ts.shieldOn) {
+    ts.shieldOn = false;
+    broadcast(room, {
+      type: 'item_applied',
+      by: player.id,
+      typeName: item.type,
+      targetId: target.id,
+      blocked: true
+    });
+    send(target.ws, { type: 'inventory_update', items: ts.inventory, reason: 'shield_consumed' });
+    send(player.ws, { type: 'inventory_update', items: me.inventory, reason: 'consume' });
+    return;
+  }
+
+  if (item.type === 'smoke') {
+    broadcast(room, {
+      type: 'item_applied',
+      by: player.id,
+      typeName: 'smoke',
+      targetId: target.id,
+      effectUntil: now + SMOKE_DURATION_MS
+    });
+  } else if (item.type === 'mini') {
+    broadcast(room, {
+      type: 'item_applied',
+      by: player.id,
+      typeName: 'mini',
+      targetId: target.id,
+      effectUntil: now + MINI_DURATION_MS
+    });
+  } else if (item.type === 'shuffle') {
+    broadcast(room, {
+      type: 'item_applied',
+      by: player.id,
+      typeName: 'shuffle',
+      targetId: target.id
     });
   }
 
