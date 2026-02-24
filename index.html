@@ -290,64 +290,91 @@ function buildLayout(cfg,reserves){
   const rows=Math.ceil(count/cols);
   const x0=4,x1=96,y0=8,y1=93;
   const cellW=(x1-x0)/cols, cellH=(y1-y0)/rows;
-  const maxSize=window.innerWidth<=600?24:18;
-  const charSize=Math.min(cellW*.9,cellH*.9,maxSize);
-  const charGap=Math.max(0.25, charSize*0.08);
-  let noisePool=shuffle([...NOISE,...NOISE,...NOISE]).slice(0,count-1);
   const targetPos=Math.floor(Math.random()*count);
-  const positions=[];
-  let ni=0;
+  const maxSize=window.innerWidth<=600?24:18;
+  const initialSize=Math.min(cellW*.9,cellH*.9,maxSize);
+  const minSize=Math.max(7.5,initialSize*.72);
 
-  function overlapsPlaced(x,y){
-    return positions.some(p=>!(x+charSize+charGap<=p.x || p.x+p.s+charGap<=x || y+charSize+charGap<=p.y || p.y+p.s+charGap<=y));
+  function overlapsPlaced(x,y,size,gap,positions){
+    return positions.some(p=>!(x+size+gap<=p.x || p.x+p.s+gap<=x || y+size+gap<=p.y || p.y+p.s+gap<=y));
   }
 
-  for(let i=0;i<count;i++){
-    const col=i%cols,row=Math.floor(i/cols);
-    const bx=x0+col*cellW,by=y0+row*cellH;
-    let x=Math.max(x0,Math.min(x1-charSize,bx));
-    let y=Math.max(y0,Math.min(y1-charSize,by));
-    let placed=false;
-    for(let t=0;t<24;t++){
-      const ox=(Math.random()-.5)*cellW*.55;
-      const oy=(Math.random()-.5)*cellH*.55;
-      x=Math.max(x0,Math.min(x1-charSize,bx+ox));
-      y=Math.max(y0,Math.min(y1-charSize,by+oy));
-      if(!isOverlapped(x,y,charSize,reserves) && !overlapsPlaced(x,y)){
-        placed=true;
-        break;
-      }
-      if(t===11 && reserves && reserves.length){
-        const r=reserves[0];
-        x=Math.max(x0,Math.min(r.x-charSize-1,x1-charSize));
-        y=Math.max(y0,Math.min(Math.max(r.y+r.h+1,y),y1-charSize));
-      }
-    }
-    if(!placed){
-      x=Math.max(x0,Math.min(x1-charSize,bx));
-      y=Math.max(y0,Math.min(y1-charSize,by));
-      if(isOverlapped(x,y,charSize,reserves) || overlapsPlaced(x,y)){
-        for(let yy=y0;yy<=y1-charSize;yy+=Math.max(1.2,charSize*.22)){
-          let found=false;
-          for(let xx=x0;xx<=x1-charSize;xx+=Math.max(1.2,charSize*.22)){
-            if(!isOverlapped(xx,yy,charSize,reserves) && !overlapsPlaced(xx,yy)){
-              x=xx;y=yy;found=true;break;
+  function canPlace(x,y,size,gap,positions){
+    if(isOverlapped(x,y,size,reserves)) return false;
+    if(overlapsPlaced(x,y,size,gap,positions)) return false;
+    return true;
+  }
+
+  // Guarantee non-overlap: retry full layout, then shrink character size gradually.
+  for(let size=initialSize; size>=minSize; size*=0.92){
+    const gap=Math.max(0.22,size*0.07);
+    for(let layoutTry=0; layoutTry<18; layoutTry++){
+      const positions=[];
+      let ni=0;
+      const noisePool=shuffle([...NOISE,...NOISE,...NOISE]).slice(0,count-1);
+      let failed=false;
+
+      for(let i=0;i<count;i++){
+        const col=i%cols,row=Math.floor(i/cols);
+        const bx=x0+col*cellW,by=y0+row*cellH;
+        let x=0,y=0,placed=false;
+
+        for(let t=0;t<48;t++){
+          const ox=(Math.random()-.5)*cellW*.58;
+          const oy=(Math.random()-.5)*cellH*.58;
+          x=Math.max(x0,Math.min(x1-size,bx+ox));
+          y=Math.max(y0,Math.min(y1-size,by+oy));
+          if(canPlace(x,y,size,gap,positions)){ placed=true; break; }
+        }
+
+        if(!placed){
+          const step=Math.max(1.0,size*.2);
+          for(let yy=y0; yy<=y1-size && !placed; yy+=step){
+            for(let xx=x0; xx<=x1-size; xx+=step){
+              if(canPlace(xx,yy,size,gap,positions)){ x=xx; y=yy; placed=true; break; }
             }
           }
-          if(found) break;
         }
+
+        if(!placed){ failed=true; break; }
+
+        const isTarget=(i===targetPos);
+        const id=isTarget?'anpanman':noisePool[ni++];
+        positions.push({id,x,y,s:size,isTarget});
       }
+
+      if(!failed) return positions;
     }
-    const isTarget=(i===targetPos);
-    const id=isTarget?'anpanman':noisePool[ni++];
-    positions.push({id,x,y,s:charSize,isTarget});
   }
-  return positions;
+
+  // Last resort: sparse deterministic layout (non-overlap may reduce count but keeps game playable).
+  const fallback=[];
+  const size=minSize;
+  const gap=Math.max(0.2,size*0.06);
+  let ni=0;
+  const noisePool=shuffle([...NOISE,...NOISE,...NOISE]).slice(0,count-1);
+  const step=Math.max(size+gap,2);
+  for(let yy=y0; yy<=y1-size && fallback.length<count; yy+=step){
+    for(let xx=x0; xx<=x1-size && fallback.length<count; xx+=step){
+      if(!canPlace(xx,yy,size,gap,fallback)) continue;
+      const i=fallback.length;
+      const isTarget=(i===targetPos);
+      const id=isTarget?'anpanman':noisePool[ni++];
+      fallback.push({id,x:xx,y:yy,s:size,isTarget});
+    }
+  }
+  if(!fallback.some(p=>p.isTarget) && fallback.length){
+    fallback[0].id='anpanman';
+    fallback[0].isTarget=true;
+  }
+  return fallback;
 }
 
 let stage=0,timeLeft=TOTAL_TIME,timer=null,answered=false,gameOver=false;
+let nextStageTimer=null;
 
 function unlockAudio(){
+  if(gameOver) return;
   if(audioUnlocked){
     if(AUDIO.bgm.paused) AUDIO.bgm.play().catch(()=>{});
     return;
@@ -418,7 +445,8 @@ function handleTap(el,isTarget){
   playCorrectVoice();
   el.classList.add('correct');
   spawnParticles(el);
-  setTimeout(nextStage,1000);
+  clearTimeout(nextStageTimer);
+  nextStageTimer=setTimeout(nextStage,1000);
 }
 
 function spawnParticles(fromEl){
@@ -446,6 +474,7 @@ function showTimeOver(){
   gameOver=true;
   answered=true;
   clearInterval(timer);
+  clearTimeout(nextStageTimer);
   AUDIO.bgm.pause();
   const f=document.createElement('div');f.className='red-flash';
   document.getElementById('scene').appendChild(f);
@@ -463,13 +492,15 @@ function startGame(){
   gameOver=false;
   stage=0;
   timeLeft=TOTAL_TIME;
+  answered=false;
   document.getElementById('ov-time').classList.remove('show');
   clearInterval(timer);
+  clearTimeout(nextStageTimer);
   timer=setInterval(()=>{
-    if(gameOver) return;
+    if(gameOver || answered) return;
     timeLeft--;
     updateTimerDisplay();
-    if(timeLeft<=0)showTimeOver();
+    if(timeLeft<=0 && !answered) showTimeOver();
   },1000);
   loadStage(stage);
 }
