@@ -141,6 +141,32 @@ body{
 }
 .btn:hover{transform:translateY(-2px);}
 .btn:active{transform:translateY(2px);box-shadow:0 2px 0 #cc3300;}
+.title-card{
+  min-width:min(86%,560px);
+  padding:30px 26px;
+}
+.title-copy{
+  font-size:clamp(.8rem,1.9vw,1rem);
+  color:#554433;
+  margin-bottom:16px;
+}
+.title-actions{
+  display:flex;
+  flex-direction:column;
+  gap:12px;
+  align-items:center;
+}
+.btn-mode{
+  width:min(100%,320px);
+}
+.btn-solo{
+  background:linear-gradient(180deg,#ff9900,#ff6600);
+  box-shadow:0 4px 0 #cc3300,0 6px 14px rgba(0,0,0,.3);
+}
+.btn-duo{
+  background:linear-gradient(180deg,#33a8ff,#1f79e0);
+  box-shadow:0 4px 0 #0d4ca1,0 6px 14px rgba(0,0,0,.3);
+}
 .ptcl{
   position:absolute;font-size:1.4rem;pointer-events:none;z-index:80;
   animation:ptcl-fly .9s forwards;
@@ -198,6 +224,18 @@ body{
       <div class="target-name">アンパンマン</div>
     </div>
 
+    <div class="overlay show" id="ov-title">
+      <div class="ov-bg"></div>
+      <div class="ov-card title-card">
+        <h2 style="color:#dd4400">どーこだ？アンパンマン</h2>
+        <div class="title-copy">モードをえらんでね</div>
+        <div class="title-actions">
+          <button class="btn btn-mode btn-solo" onclick="startSoloMode()">一人で遊ぶ</button>
+          <button class="btn btn-mode btn-duo" onclick="startDuoMode()">二人で遊ぶ</button>
+        </div>
+      </div>
+    </div>
+
     <div class="overlay" id="ov-time">
       <div class="ov-bg"></div>
       <div class="ov-card">
@@ -244,6 +282,7 @@ const AUDIO = {
 };
 AUDIO.bgm.loop = true;
 const TOTAL_TIME = 60;
+const DUO_WS_URL = 'wss://ampm-s9dc.onrender.com/ws';
 let audioUnlocked = false;
 let pendingStageStartVoice = false;
 const MP = {
@@ -392,6 +431,49 @@ function buildLayout(cfg,reserves){
 let stage=0,timeLeft=TOTAL_TIME,timer=null,answered=false,gameOver=false,foundCount=0;
 let nextStageTimer=null;
 
+function showTitle(){
+  document.getElementById('ov-title').classList.add('show');
+  document.getElementById('match-el').textContent='モードをえらんでね';
+}
+
+function hideTitle(){
+  document.getElementById('ov-title').classList.remove('show');
+}
+
+function cleanupForModeSwitch(){
+  gameOver=true;
+  answered=true;
+  clearInterval(timer);
+  clearTimeout(nextStageTimer);
+  document.querySelectorAll('.char,.ptcl,.red-flash').forEach(e=>e.remove());
+  document.getElementById('ov-time').classList.remove('show');
+  if(MP.ws){
+    try{ MP.ws.close(); }catch(_){}
+  }
+  MP.ws=null;
+  MP.connected=false;
+  MP.inMatch=false;
+  MP.myId='';
+  MP.roomId='';
+  MP.scores={};
+}
+
+function startSoloMode(){
+  cleanupForModeSwitch();
+  MP.soloMode=true;
+  MP.inMatch=true;
+  MP.endAt=Date.now() + TOTAL_TIME*1000;
+  hideTitle();
+  startGame();
+}
+
+function startDuoMode(){
+  cleanupForModeSwitch();
+  MP.soloMode=false;
+  hideTitle();
+  connectMatchServer(DUO_WS_URL);
+}
+
 function unlockAudio(){
   if(gameOver) return;
   if(audioUnlocked){
@@ -522,6 +604,9 @@ function startGame(){
   clearInterval(timer);
   clearTimeout(nextStageTimer);
   document.querySelectorAll('.char,.ptcl,.red-flash').forEach(e=>e.remove());
+  if(MP.soloMode){
+    MP.endAt = Date.now() + TOTAL_TIME*1000;
+  }
   updateMatchHud();
   timer=setInterval(()=>{
     if(gameOver || answered) return;
@@ -578,21 +663,10 @@ function sendFound(){
   MP.ws.send(JSON.stringify({type:'found'}));
 }
 
-function connectMatchServer(){
-  const qpWs = new URLSearchParams(location.search).get('ws');
-  const proto=location.protocol==='https:'?'wss':'ws';
-  const localDefault = (location.hostname==='localhost' || location.hostname==='127.0.0.1')
-    ? `${proto}://${location.host}/ws`
-    : '';
-  const wsUrl = qpWs || localDefault;
-  if(!wsUrl){
-    MP.connected = false;
-    MP.inMatch = true;
-    MP.soloMode = true;
-    startGame();
-    updateMatchHud();
-    return;
-  }
+function connectMatchServer(wsUrl){
+  MP.connected=false;
+  MP.inMatch=false;
+  updateMatchHud();
 
   const ws=new WebSocket(wsUrl);
   MP.ws=ws;
@@ -645,7 +719,10 @@ function connectMatchServer(){
 }
 
 window.addEventListener('pointerdown', unlockAudio, { passive:true });
-window.addEventListener('load',connectMatchServer);
+window.addEventListener('load',()=>{
+  updateMatchHud();
+  showTitle();
+});
 </script>
 </body>
 </html>
