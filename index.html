@@ -292,24 +292,50 @@ function buildLayout(cfg,reserves){
   const cellW=(x1-x0)/cols, cellH=(y1-y0)/rows;
   const maxSize=window.innerWidth<=600?24:18;
   const charSize=Math.min(cellW*.9,cellH*.9,maxSize);
+  const charGap=Math.max(0.25, charSize*0.08);
   let noisePool=shuffle([...NOISE,...NOISE,...NOISE]).slice(0,count-1);
   const targetPos=Math.floor(Math.random()*count);
   const positions=[];
   let ni=0;
+
+  function overlapsPlaced(x,y){
+    return positions.some(p=>!(x+charSize+charGap<=p.x || p.x+p.s+charGap<=x || y+charSize+charGap<=p.y || p.y+p.s+charGap<=y));
+  }
+
   for(let i=0;i<count;i++){
     const col=i%cols,row=Math.floor(i/cols);
     const bx=x0+col*cellW,by=y0+row*cellH;
-    let x=x0,y=y0;
-    for(let t=0;t<12;t++){
+    let x=Math.max(x0,Math.min(x1-charSize,bx));
+    let y=Math.max(y0,Math.min(y1-charSize,by));
+    let placed=false;
+    for(let t=0;t<24;t++){
       const ox=(Math.random()-.5)*cellW*.55;
       const oy=(Math.random()-.5)*cellH*.55;
       x=Math.max(x0,Math.min(x1-charSize,bx+ox));
       y=Math.max(y0,Math.min(y1-charSize,by+oy));
-      if(!isOverlapped(x,y,charSize,reserves)) break;
+      if(!isOverlapped(x,y,charSize,reserves) && !overlapsPlaced(x,y)){
+        placed=true;
+        break;
+      }
       if(t===11 && reserves && reserves.length){
         const r=reserves[0];
         x=Math.max(x0,Math.min(r.x-charSize-1,x1-charSize));
         y=Math.max(y0,Math.min(Math.max(r.y+r.h+1,y),y1-charSize));
+      }
+    }
+    if(!placed){
+      x=Math.max(x0,Math.min(x1-charSize,bx));
+      y=Math.max(y0,Math.min(y1-charSize,by));
+      if(isOverlapped(x,y,charSize,reserves) || overlapsPlaced(x,y)){
+        for(let yy=y0;yy<=y1-charSize;yy+=Math.max(1.2,charSize*.22)){
+          let found=false;
+          for(let xx=x0;xx<=x1-charSize;xx+=Math.max(1.2,charSize*.22)){
+            if(!isOverlapped(xx,yy,charSize,reserves) && !overlapsPlaced(xx,yy)){
+              x=xx;y=yy;found=true;break;
+            }
+          }
+          if(found) break;
+        }
       }
     }
     const isTarget=(i===targetPos);
