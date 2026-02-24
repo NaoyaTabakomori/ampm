@@ -1,0 +1,12 @@
+{
+  "name": "ampm-versus",
+  "version": "1.0.0",
+  "private": true,
+  "description": "アンパンマンをさがせ 対戦版",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}
