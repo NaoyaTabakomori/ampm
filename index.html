@@ -592,6 +592,7 @@ function loadStage(idx){
   if(!MP.inMatch) return;
   unlockAudio();
   playStageStartVoice();
+  syncEffectState();
   answered=false;
   inStageTransition=false;
   stageItemUsed=false;
@@ -664,6 +665,8 @@ function showTimeOver(){
   if(gameOver) return;
   gameOver=true;
   answered=true;
+  setSmoke(false);
+  setMini(false);
   clearInterval(timer);
   clearTimeout(nextStageTimer);
   AUDIO.bgm.pause();
@@ -705,6 +708,7 @@ function startGame(){
   updateMatchHud();
   updateItemHud();
   timer=setInterval(()=>{
+    syncEffectState();
     if(gameOver || answered) return;
     const left=Math.ceil((MP.endAt-Date.now())/1000);
     timeLeft=Math.max(0,left);
@@ -784,6 +788,22 @@ function setMini(on){
   if(!scene) return;
   if(on) scene.classList.add('mini-on');
   else scene.classList.remove('mini-on');
+}
+
+function syncEffectState(){
+  const now=Date.now();
+  if(smokeUntil>0 && now>=smokeUntil){
+    smokeUntil=0;
+    setSmoke(false);
+  }else if(smokeUntil>now){
+    setSmoke(true);
+  }
+  if(miniUntil>0 && now>=miniUntil){
+    miniUntil=0;
+    setMini(false);
+  }else if(miniUntil>now){
+    setMini(true);
+  }
 }
 
 function applyShuffleEffect(){
@@ -929,18 +949,12 @@ function connectMatchServer(wsUrl){
       if(msg.typeName==='smoke' && msg.targetId===MP.myId && !msg.blocked){
         smokeUntil=msg.effectUntil||0;
         showItemToast('スモークを受けた！');
-        setSmoke(true);
-        setTimeout(()=>{
-          if(Date.now()>=smokeUntil) setSmoke(false);
-        }, ITEM_META.smoke.durMs + 60);
+        syncEffectState();
       }
       if(msg.typeName==='mini' && msg.targetId===MP.myId && !msg.blocked){
         miniUntil=msg.effectUntil||0;
         showItemToast('ミニ化を受けた！');
-        setMini(true);
-        setTimeout(()=>{
-          if(Date.now()>=miniUntil) setMini(false);
-        }, ITEM_META.mini.durMs + 60);
+        syncEffectState();
       }
       if(msg.typeName==='shuffle' && msg.targetId===MP.myId && !msg.blocked){
         applyShuffleEffect();
